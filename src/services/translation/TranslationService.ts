@@ -3,6 +3,7 @@ import { logger } from '../../utils/logger';
 import { getRedisClient } from '../../config/database';
 import { GoogleTranslationProvider } from './providers/GoogleTranslationProvider';
 import { AzureTranslationProvider } from './providers/AzureTranslationProvider';
+import { MockTranslationProvider } from './providers/MockTranslationProvider';
 import { contextManager } from './ContextManager';
 import { languageDetector } from './LanguageDetector';
 import { translationCache } from './TranslationCache';
@@ -36,25 +37,34 @@ export class TranslationService {
    */
   private initializeProviders(): void {
     try {
-      // Initialize Google Cloud Translation as primary
-      const googleProvider = new GoogleTranslationProvider(
-        process.env.GOOGLE_TRANSLATE_API_KEY,
-        process.env.GOOGLE_CLOUD_PROJECT_ID
-      );
+      const hasGoogleKey = process.env.GOOGLE_TRANSLATE_API_KEY && process.env.GOOGLE_TRANSLATE_API_KEY !== 'mock_google_key';
+      const hasAzureKey = process.env.AZURE_TRANSLATOR_KEY && process.env.AZURE_TRANSLATOR_KEY !== 'mock_azure_key';
 
-      // Initialize Azure Translator as fallback
-      const azureProvider = new AzureTranslationProvider(
-        process.env.AZURE_TRANSLATOR_KEY,
-        process.env.AZURE_TRANSLATOR_REGION,
-        process.env.AZURE_TRANSLATOR_ENDPOINT
-      );
+      if (!hasGoogleKey && !hasAzureKey) {
+        // Use mock provider for testing when no real API keys are available
+        logger.warn('No valid translation API keys found, using mock provider for testing');
+        const mockProvider = new MockTranslationProvider();
+        fallbackManager.registerProvider('mock', mockProvider, true);
+        this.setProviders(mockProvider, mockProvider);
+      } else {
+        // Initialize real providers when API keys are available
+        if (hasGoogleKey) {
+          const googleProvider = new GoogleTranslationProvider(
+            process.env.GOOGLE_TRANSLATE_API_KEY,
+            process.env.GOOGLE_CLOUD_PROJECT_ID
+          );
+          fallbackManager.registerProvider('google', googleProvider, true);
+        }
 
-      // Register providers with fallback manager
-      fallbackManager.registerProvider('google', googleProvider, true);
-      fallbackManager.registerProvider('azure', azureProvider, false);
-
-      // Set providers for backward compatibility
-      this.setProviders(googleProvider, azureProvider);
+        if (hasAzureKey) {
+          const azureProvider = new AzureTranslationProvider(
+            process.env.AZURE_TRANSLATOR_KEY,
+            process.env.AZURE_TRANSLATOR_REGION,
+            process.env.AZURE_TRANSLATOR_ENDPOINT
+          );
+          fallbackManager.registerProvider('azure', azureProvider, !hasGoogleKey);
+        }
+      }
       
       logger.info('Translation providers initialized successfully');
     } catch (error) {
