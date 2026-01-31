@@ -826,3 +826,203 @@ export function sanitizeUserInput(data: Record<string, any>): Record<string, any
   
   return sanitized;
 }
+
+/**
+ * Validation result interface
+ */
+export interface ValidationResult {
+  isValid: boolean;
+  errors: string[];
+}
+
+/**
+ * Validates product creation data
+ */
+export function validateProductData(data: any): ValidationResult {
+  const errors: string[] = [];
+  
+  try {
+    if (!data.name || typeof data.name !== 'string' || data.name.trim().length === 0) {
+      errors.push('Product name is required and must be a non-empty string');
+    } else if (data.name.length > 255) {
+      errors.push('Product name must be 255 characters or less');
+    }
+    
+    if (data.description && typeof data.description !== 'string') {
+      errors.push('Description must be a string');
+    } else if (data.description && data.description.length > 1000) {
+      errors.push('Description must be 1000 characters or less');
+    }
+    
+    if (!data.category || !validateProductCategory(data.category)) {
+      errors.push('Valid product category is required');
+    }
+    
+    if (typeof data.basePrice !== 'number' || data.basePrice <= 0) {
+      errors.push('Base price must be a positive number');
+    }
+    
+    if (data.currency && !validateCurrency(data.currency)) {
+      errors.push('Invalid currency code');
+    }
+    
+    if (!data.attributes) {
+      errors.push('Product attributes are required');
+    } else {
+      try {
+        validateProductAttributes(data.attributes);
+      } catch (error) {
+        if (error instanceof ValidationError) {
+          errors.push(`Attributes: ${error.message}`);
+        }
+      }
+    }
+    
+    if (data.images && !Array.isArray(data.images)) {
+      errors.push('Images must be an array');
+    }
+    
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      errors.push(error.message);
+    } else {
+      errors.push('Validation error occurred');
+    }
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+}
+
+/**
+ * Validates product update data
+ */
+export function validateProductUpdate(data: any): ValidationResult {
+  const errors: string[] = [];
+  
+  try {
+    if (data.name !== undefined) {
+      if (!data.name || typeof data.name !== 'string' || data.name.trim().length === 0) {
+        errors.push('Product name must be a non-empty string');
+      } else if (data.name.length > 255) {
+        errors.push('Product name must be 255 characters or less');
+      }
+    }
+    
+    if (data.description !== undefined && typeof data.description !== 'string') {
+      errors.push('Description must be a string');
+    } else if (data.description && data.description.length > 1000) {
+      errors.push('Description must be 1000 characters or less');
+    }
+    
+    if (data.category !== undefined && !validateProductCategory(data.category)) {
+      errors.push('Invalid product category');
+    }
+    
+    if (data.basePrice !== undefined && (typeof data.basePrice !== 'number' || data.basePrice <= 0)) {
+      errors.push('Base price must be a positive number');
+    }
+    
+    if (data.currency !== undefined && !validateCurrency(data.currency)) {
+      errors.push('Invalid currency code');
+    }
+    
+    if (data.attributes !== undefined) {
+      try {
+        validateProductAttributes(data.attributes);
+      } catch (error) {
+        if (error instanceof ValidationError) {
+          errors.push(`Attributes: ${error.message}`);
+        }
+      }
+    }
+    
+    if (data.images !== undefined && !Array.isArray(data.images)) {
+      errors.push('Images must be an array');
+    }
+    
+    if (data.availability !== undefined) {
+      const validAvailability = ['available', 'limited', 'out_of_stock'];
+      if (!validAvailability.includes(data.availability)) {
+        errors.push('Availability must be one of: available, limited, out_of_stock');
+      }
+    }
+    
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      errors.push(error.message);
+    } else {
+      errors.push('Validation error occurred');
+    }
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+}
+
+/**
+ * Validates product search filters
+ */
+export function validateSearchFilters(filters: any): ValidationResult {
+  const errors: string[] = [];
+  
+  try {
+    if (filters.category !== undefined && !validateProductCategory(filters.category)) {
+      errors.push('Invalid product category');
+    }
+    
+    if (filters.minPrice !== undefined && (typeof filters.minPrice !== 'number' || filters.minPrice < 0)) {
+      errors.push('Minimum price must be a non-negative number');
+    }
+    
+    if (filters.maxPrice !== undefined && (typeof filters.maxPrice !== 'number' || filters.maxPrice < 0)) {
+      errors.push('Maximum price must be a non-negative number');
+    }
+    
+    if (filters.minPrice !== undefined && filters.maxPrice !== undefined && filters.minPrice > filters.maxPrice) {
+      errors.push('Minimum price cannot be greater than maximum price');
+    }
+    
+    if (filters.availability !== undefined) {
+      const validAvailability = ['available', 'limited', 'out_of_stock'];
+      if (!validAvailability.includes(filters.availability)) {
+        errors.push('Availability must be one of: available, limited, out_of_stock');
+      }
+    }
+    
+    if (filters.vendorId !== undefined && !validateUUID(filters.vendorId)) {
+      errors.push('Invalid vendor ID format');
+    }
+    
+    if (filters.quality !== undefined) {
+      const validQualities = ['basic', 'standard', 'premium'];
+      if (!validQualities.includes(filters.quality)) {
+        errors.push('Quality must be one of: basic, standard, premium');
+      }
+    }
+    
+    if (filters.perishable !== undefined && typeof filters.perishable !== 'boolean') {
+      errors.push('Perishable must be a boolean value');
+    }
+    
+    if (filters.searchTerm !== undefined && typeof filters.searchTerm !== 'string') {
+      errors.push('Search term must be a string');
+    }
+    
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      errors.push(error.message);
+    } else {
+      errors.push('Validation error occurred');
+    }
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+}

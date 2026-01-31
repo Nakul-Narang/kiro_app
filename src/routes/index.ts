@@ -7,6 +7,7 @@ import { Router } from 'express';
 import authRoutes from './auth';
 import profileRoutes from './profile';
 import translationRoutes from './translation';
+import productRoutes from './products';
 
 const router = Router();
 
@@ -14,6 +15,7 @@ const router = Router();
 router.use('/auth', authRoutes);
 router.use('/profile', profileRoutes);
 router.use('/translation', translationRoutes);
+router.use('/products', productRoutes);
 
 // Health check endpoint
 router.get('/health', (_req, res) => {
