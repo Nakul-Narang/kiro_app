@@ -256,16 +256,32 @@ export class ProductController {
   searchProducts = async (req: Request, res: Response): Promise<void> => {
     try {
       // Parse query parameters
-      const filters: ProductSearchFilters = {
-        category: req.query.category as string,
-        minPrice: req.query.minPrice ? parseFloat(req.query.minPrice as string) : undefined,
-        maxPrice: req.query.maxPrice ? parseFloat(req.query.maxPrice as string) : undefined,
-        availability: req.query.availability as 'available' | 'limited' | 'out_of_stock',
-        vendorId: req.query.vendorId as string,
-        quality: req.query.quality as 'basic' | 'standard' | 'premium',
-        perishable: req.query.perishable ? req.query.perishable === 'true' : undefined,
-        searchTerm: req.query.q as string
-      };
+      const filters: ProductSearchFilters = {};
+      
+      if (req.query.category) {
+        filters.category = req.query.category as string;
+      }
+      if (req.query.minPrice) {
+        filters.minPrice = parseFloat(req.query.minPrice as string);
+      }
+      if (req.query.maxPrice) {
+        filters.maxPrice = parseFloat(req.query.maxPrice as string);
+      }
+      if (req.query.availability) {
+        filters.availability = req.query.availability as 'available' | 'limited' | 'out_of_stock';
+      }
+      if (req.query.vendorId) {
+        filters.vendorId = req.query.vendorId as string;
+      }
+      if (req.query.quality) {
+        filters.quality = req.query.quality as 'basic' | 'standard' | 'premium';
+      }
+      if (req.query.perishable) {
+        filters.perishable = req.query.perishable === 'true';
+      }
+      if (req.query.q) {
+        filters.searchTerm = req.query.q as string;
+      }
 
       const options: ProductSearchOptions = {
         page: req.query.page ? parseInt(req.query.page as string) : 1,
@@ -288,12 +304,8 @@ export class ProductController {
         return;
       }
 
-      // Remove undefined values from filters
-      const cleanFilters = Object.fromEntries(
-        Object.entries(filters).filter(([_, value]) => value !== undefined)
-      ) as ProductSearchFilters;
-
-      const result = await this.productModel.search(cleanFilters, options);
+      // Remove undefined values from filters - no longer needed since we build filters conditionally
+      const result = await this.productModel.search(filters, options);
 
       res.json({
         success: true,
@@ -429,7 +441,7 @@ export class ProductController {
    * Get product categories
    * GET /api/products/categories
    */
-  getCategories = async (req: Request, res: Response): Promise<void> => {
+  getCategories = async (_req: Request, res: Response): Promise<void> => {
     try {
       const categories = await this.productModel.getCategories();
 
