@@ -8,6 +8,7 @@ import authRoutes from './auth';
 import profileRoutes from './profile';
 import translationRoutes from './translation';
 import productRoutes from './products';
+import vendorRoutes from './vendor';
 
 const router = Router();
 
@@ -16,6 +17,7 @@ router.use('/auth', authRoutes);
 router.use('/profile', profileRoutes);
 router.use('/translation', translationRoutes);
 router.use('/products', productRoutes);
+router.use('/vendors', vendorRoutes);
 
 // Health check endpoint
 router.get('/health', (_req, res) => {
