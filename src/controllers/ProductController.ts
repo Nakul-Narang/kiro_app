@@ -1,11 +1,14 @@
 /**
  * Product controller for handling product-related HTTP requests
  * Provides CRUD operations and search functionality for products
+ * Enhanced with real-time inventory synchronization
  */
 
 import { Request, Response } from 'express';
 import { ProductModel, CreateProductRequest, UpdateProductRequest, ProductSearchFilters, ProductSearchOptions } from '../models/Product';
 import { VendorModel } from '../models/Vendor';
+import { InventoryService } from '../services/inventory/InventoryService';
+import { SearchCacheService } from '../services/inventory/SearchCacheService';
 import { ApiResponse } from '../types';
 import { logger } from '../utils/logger';
 import { validateProductData, validateProductUpdate, validateSearchFilters } from '../utils/validation';
@@ -13,10 +16,14 @@ import { validateProductData, validateProductUpdate, validateSearchFilters } fro
 export class ProductController {
   private productModel: ProductModel;
   private vendorModel: VendorModel;
+  private inventoryService: InventoryService;
+  private searchCacheService: SearchCacheService;
 
   constructor() {
     this.productModel = new ProductModel();
     this.vendorModel = new VendorModel();
+    this.inventoryService = new InventoryService();
+    this.searchCacheService = SearchCacheService.getInstance();
   }
 
   /**
@@ -71,7 +78,8 @@ export class ProductController {
         images: req.body.images || []
       };
 
-      const product = await this.productModel.create(productData);
+      // Use inventory service for real-time synchronization
+      const product = await this.inventoryService.createProduct(productData);
 
       res.status(201).json({
         success: true,
@@ -142,7 +150,7 @@ export class ProductController {
       }
 
       // Check if product exists and belongs to vendor
-      const belongsToVendor = await this.productModel.belongsToVendor(id, vendorId);
+      const belongsToVendor = await this.inventoryService.checkOwnership(id, vendorId);
       if (!belongsToVendor) {
         res.status(404).json({
           success: false,
@@ -167,7 +175,8 @@ export class ProductController {
       }
 
       const updates: UpdateProductRequest = req.body;
-      const product = await this.productModel.update(id, updates);
+      // Use inventory service for real-time synchronization
+      const product = await this.inventoryService.updateProduct(id, updates);
 
       if (!product) {
         res.status(404).json({
@@ -213,7 +222,7 @@ export class ProductController {
       }
 
       // Check if product exists and belongs to vendor
-      const belongsToVendor = await this.productModel.belongsToVendor(id, vendorId);
+      const belongsToVendor = await this.inventoryService.checkOwnership(id, vendorId);
       if (!belongsToVendor) {
         res.status(404).json({
           success: false,
@@ -223,7 +232,8 @@ export class ProductController {
         return;
       }
 
-      const deleted = await this.productModel.delete(id);
+      // Use inventory service for real-time synchronization
+      const deleted = await this.inventoryService.deleteProduct(id);
       if (!deleted) {
         res.status(404).json({
           success: false,
@@ -304,8 +314,16 @@ export class ProductController {
         return;
       }
 
-      // Remove undefined values from filters - no longer needed since we build filters conditionally
-      const result = await this.productModel.search(filters, options);
+      // Try to get from cache first
+      let result = await this.searchCacheService.getCachedProductSearch(filters, options);
+      
+      if (!result) {
+        // Cache miss, perform search
+        result = await this.productModel.search(filters, options);
+        
+        // Cache the result
+        await this.searchCacheService.cacheProductSearch(filters, options, result);
+      }
 
       res.json({
         success: true,
@@ -490,7 +508,7 @@ export class ProductController {
       }
 
       // Check if product exists and belongs to vendor
-      const belongsToVendor = await this.productModel.belongsToVendor(id, vendorId);
+      const belongsToVendor = await this.inventoryService.checkOwnership(id, vendorId);
       if (!belongsToVendor) {
         res.status(404).json({
           success: false,
@@ -500,7 +518,8 @@ export class ProductController {
         return;
       }
 
-      const updated = await this.productModel.updateAvailability(id, availability);
+      // Use inventory service for real-time synchronization
+      const updated = await this.inventoryService.updateAvailability(id, availability);
       if (!updated) {
         res.status(404).json({
           success: false,
@@ -518,6 +537,161 @@ export class ProductController {
 
     } catch (error) {
       logger.error('Error updating availability:', error);
+      res.status(500).json({
+        success: false,
+        error: { message: 'Internal server error' },
+        timestamp: new Date()
+      } as ApiResponse);
+    }
+  };
+
+  /**
+   * Bulk update product availability
+   * POST /api/products/bulk/availability
+   */
+  bulkUpdateAvailability = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const vendorId = req.user?.userId;
+      if (!vendorId) {
+        res.status(401).json({
+          success: false,
+          error: { message: 'Authentication required' },
+          timestamp: new Date()
+        } as ApiResponse);
+        return;
+      }
+
+      const { updates } = req.body;
+      if (!Array.isArray(updates) || updates.length === 0) {
+        res.status(400).json({
+          success: false,
+          error: { message: 'Updates array is required' },
+          timestamp: new Date()
+        } as ApiResponse);
+        return;
+      }
+
+      // Validate each update
+      for (const update of updates) {
+        if (!update.productId || !update.availability) {
+          res.status(400).json({
+            success: false,
+            error: { message: 'Each update must have productId and availability' },
+            timestamp: new Date()
+          } as ApiResponse);
+          return;
+        }
+
+        if (!['available', 'limited', 'out_of_stock'].includes(update.availability)) {
+          res.status(400).json({
+            success: false,
+            error: { message: 'Invalid availability status' },
+            timestamp: new Date()
+          } as ApiResponse);
+          return;
+        }
+
+        // Check ownership
+        const belongsToVendor = await this.inventoryService.checkOwnership(update.productId, vendorId);
+        if (!belongsToVendor) {
+          res.status(403).json({
+            success: false,
+            error: { message: `Access denied for product: ${update.productId}` },
+            timestamp: new Date()
+          } as ApiResponse);
+          return;
+        }
+      }
+
+      const result = await this.inventoryService.bulkUpdateAvailability(updates);
+
+      res.json({
+        success: true,
+        data: result,
+        timestamp: new Date()
+      } as ApiResponse);
+
+    } catch (error) {
+      logger.error('Error bulk updating availability:', error);
+      res.status(500).json({
+        success: false,
+        error: { message: 'Internal server error' },
+        timestamp: new Date()
+      } as ApiResponse);
+    }
+  };
+
+  /**
+   * Get vendor inventory statistics
+   * GET /api/products/inventory/stats
+   */
+  getInventoryStats = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const vendorId = req.user?.userId;
+      if (!vendorId) {
+        res.status(401).json({
+          success: false,
+          error: { message: 'Authentication required' },
+          timestamp: new Date()
+        } as ApiResponse);
+        return;
+      }
+
+      // Verify user is a vendor
+      const isVendor = await this.vendorModel.exists(vendorId);
+      if (!isVendor) {
+        res.status(403).json({
+          success: false,
+          error: { message: 'Only vendors can access inventory stats' },
+          timestamp: new Date()
+        } as ApiResponse);
+        return;
+      }
+
+      const stats = await this.inventoryService.getVendorInventoryStats(vendorId);
+
+      res.json({
+        success: true,
+        data: stats,
+        timestamp: new Date()
+      } as ApiResponse);
+
+    } catch (error) {
+      logger.error('Error getting inventory stats:', error);
+      res.status(500).json({
+        success: false,
+        error: { message: 'Internal server error' },
+        timestamp: new Date()
+      } as ApiResponse);
+    }
+  };
+
+  /**
+   * Get cache statistics (admin endpoint)
+   * GET /api/products/cache/stats
+   */
+  getCacheStats = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const vendorId = req.user?.userId;
+      if (!vendorId) {
+        res.status(401).json({
+          success: false,
+          error: { message: 'Authentication required' },
+          timestamp: new Date()
+        } as ApiResponse);
+        return;
+      }
+
+      const stats = await this.searchCacheService.getCacheStats();
+
+      res.json({
+        success: true,
+        data: stats,
+        timestamp: new Date()
+      } as ApiResponse);
+
+    } catch (error) {
+      logger.error('Error getting cache stats:', error);
       res.status(500).json({
         success: false,
         error: { message: 'Internal server error' },

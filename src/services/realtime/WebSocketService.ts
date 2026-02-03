@@ -1,5 +1,6 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { WebSocketMessage, UserPresence } from '../../types';
+import { InventoryEventService } from '../inventory/InventoryEventService';
 import { logger } from '../../utils/logger';
 import { getRedisClient } from '../../config/database';
 
@@ -16,6 +17,16 @@ export class WebSocketService {
   constructor(io: SocketIOServer) {
     this.io = io;
     this.setupEventHandlers();
+    this.setupInventoryEventIntegration();
+  }
+
+  /**
+   * Setup integration with inventory event system
+   */
+  private setupInventoryEventIntegration(): void {
+    const inventoryEventService = InventoryEventService.getInstance();
+    inventoryEventService.setWebSocketService(this);
+    logger.info('✅ WebSocket service integrated with inventory events');
   }
 
   /**
@@ -53,6 +64,16 @@ export class WebSocketService {
       // Handle typing indicators
       socket.on('typing', async (data: { sessionId: string; isTyping: boolean }) => {
         await this.handleTyping(socket, data);
+      });
+
+      // Handle inventory subscription
+      socket.on('subscribe_inventory', async (data: { vendorId?: string; categories?: string[] }) => {
+        await this.handleInventorySubscription(socket, data);
+      });
+
+      // Handle inventory unsubscription
+      socket.on('unsubscribe_inventory', async () => {
+        await this.handleInventoryUnsubscription(socket);
       });
 
       // Handle disconnection
@@ -280,6 +301,76 @@ export class WebSocketService {
   }
 
   /**
+   * Handle inventory subscription
+   */
+  private async handleInventorySubscription(socket: Socket, data: { vendorId?: string; categories?: string[] }): Promise<void> {
+    try {
+      const userId = socket.data.userId;
+      
+      if (!userId) {
+        socket.emit('error', { message: 'User not authenticated' });
+        return;
+      }
+
+      // Join inventory notification rooms
+      if (data.vendorId) {
+        await socket.join(`inventory:vendor:${data.vendorId}`);
+        logger.debug(`User ${userId} subscribed to vendor ${data.vendorId} inventory updates`);
+      }
+
+      if (data.categories && data.categories.length > 0) {
+        for (const category of data.categories) {
+          await socket.join(`inventory:category:${category}`);
+        }
+        logger.debug(`User ${userId} subscribed to categories: ${data.categories.join(', ')}`);
+      }
+
+      // Join general inventory updates room
+      await socket.join('inventory:general');
+
+      socket.emit('inventory_subscription_confirmed', {
+        vendorId: data.vendorId,
+        categories: data.categories,
+        timestamp: new Date()
+      });
+
+    } catch (error) {
+      logger.error('Failed to handle inventory subscription:', error);
+      socket.emit('error', { message: 'Failed to subscribe to inventory updates' });
+    }
+  }
+
+  /**
+   * Handle inventory unsubscription
+   */
+  private async handleInventoryUnsubscription(socket: Socket): Promise<void> {
+    try {
+      const userId = socket.data.userId;
+      
+      if (!userId) {
+        return;
+      }
+
+      // Leave all inventory rooms
+      const rooms = Array.from(socket.rooms);
+      const inventoryRooms = rooms.filter(room => room.startsWith('inventory:'));
+      
+      for (const room of inventoryRooms) {
+        await socket.leave(room);
+      }
+
+      socket.emit('inventory_unsubscription_confirmed', {
+        timestamp: new Date()
+      });
+
+      logger.debug(`User ${userId} unsubscribed from inventory updates`);
+
+    } catch (error) {
+      logger.error('Failed to handle inventory unsubscription:', error);
+    }
+  }
+
+  /**
    * Handle user disconnection
    */
   private async handleDisconnection(socket: Socket): Promise<void> {
@@ -413,6 +504,93 @@ export class WebSocketService {
   public getActiveSessionsCount(): number {
     return Array.from(this.userSessions.values())
       .reduce((total, sessions) => total + sessions.size, 0);
+  }
+
+  /**
+   * Broadcast inventory update to relevant users
+   */
+  public async broadcastInventoryUpdate(event: {
+    eventType: string;
+    productId: string;
+    vendorId: string;
+    product?: any;
+    timestamp: Date;
+  }): Promise<void> {
+    try {
+      const notification = {
+        type: 'inventory_update',
+        ...event
+      };
+
+      // Notify vendor's subscribers
+      this.io.to(`inventory:vendor:${event.vendorId}`).emit('inventory_notification', notification);
+
+      // Notify category subscribers if product data is available
+      if (event.product && event.product.category) {
+        this.io.to(`inventory:category:${event.product.category}`).emit('inventory_notification', notification);
+      }
+
+      // Notify general inventory subscribers for major events
+      if (['product_created', 'availability_changed'].includes(event.eventType)) {
+        this.io.to('inventory:general').emit('inventory_notification', notification);
+      }
+
+      logger.debug(`📡 Broadcasted inventory update: ${event.eventType} for product ${event.productId}`);
+    } catch (error) {
+      logger.error('❌ Error broadcasting inventory update:', error);
+    }
+  }
+
+  /**
+   * Send inventory notification to specific user
+   */
+  public async sendInventoryNotification(userId: string, notification: any): Promise<boolean> {
+    try {
+      return await this.sendToUser(userId, 'inventory_notification', notification);
+    } catch (error) {
+      logger.error('❌ Error sending inventory notification:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Get inventory subscription statistics
+   */
+  public getInventorySubscriptionStats(): {
+    totalSubscribers: number;
+    vendorSubscriptions: number;
+    categorySubscriptions: number;
+    generalSubscriptions: number;
+  } {
+    const stats = {
+      totalSubscribers: 0,
+      vendorSubscriptions: 0,
+      categorySubscriptions: 0,
+      generalSubscriptions: 0
+    };
+
+    // Count subscriptions by room type
+    this.io.sockets.adapter.rooms.forEach((sockets, roomName) => {
+      if (roomName.startsWith('inventory:')) {
+        const subscriberCount = sockets.size;
+        
+        if (roomName.startsWith('inventory:vendor:')) {
+          stats.vendorSubscriptions += subscriberCount;
+        } else if (roomName.startsWith('inventory:category:')) {
+          stats.categorySubscriptions += subscriberCount;
+        } else if (roomName === 'inventory:general') {
+          stats.generalSubscriptions = subscriberCount;
+        }
+      }
+    });
+
+    stats.totalSubscribers = Math.max(
+      stats.vendorSubscriptions,
+      stats.categorySubscriptions,
+      stats.generalSubscriptions
+    );
+
+    return stats;
   }
 }
 

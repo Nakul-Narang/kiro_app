@@ -1,6 +1,7 @@
 /**
  * Product routes
  * Handles all product-related API endpoints
+ * Enhanced with real-time inventory synchronization
  */
 
 import { Router } from 'express';
@@ -25,6 +26,11 @@ router.get('/my/products', authenticate, requireVendor, productController.getMyP
 router.put('/:id', authenticate, requireVendor, productController.updateProduct);
 router.delete('/:id', authenticate, requireVendor, productController.deleteProduct);
 router.patch('/:id/availability', authenticate, requireVendor, productController.updateAvailability);
+
+// New inventory management routes
+router.post('/bulk/availability', authenticate, requireVendor, productController.bulkUpdateAvailability);
+router.get('/inventory/stats', authenticate, requireVendor, productController.getInventoryStats);
+router.get('/cache/stats', authenticate, productController.getCacheStats);
 
 // Vendor products (public access)
 router.get('/vendors/:vendorId/products', productController.getVendorProducts);

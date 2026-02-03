@@ -7,6 +7,8 @@ import {
 } from '../../types';
 import { logger } from '../../utils/logger';
 import { getRedisClient, getMongoDb } from '../../config/database';
+import { priceAnalyzer } from './PriceAnalyzer';
+import { seasonalAnalysisEngine } from './SeasonalAnalysisEngine';
 
 /**
  * Price discovery service that provides intelligent pricing recommendations
@@ -16,9 +18,38 @@ export class PriceDiscoveryService {
   private cacheTTL = 300; // 5 minutes for price data
 
   /**
-   * Generate price recommendation for a product
+   * Generate price recommendation for a product with ML enhancement
    */
   public async generatePriceRecommendation(request: PriceDiscoveryRequest): Promise<PriceRecommendation> {
+    const startTime = Date.now();
+    
+    try {
+      logger.info(`Generating price recommendation for product ${request.productId} in category ${request.category}`);
+      
+      // Try ML-enhanced recommendation first
+      try {
+        const mlRecommendation = await priceAnalyzer.generateMLPriceRecommendation(request);
+        if (mlRecommendation.confidence > 50) {
+          logger.info(`Using ML recommendation with ${mlRecommendation.confidence}% confidence`);
+          return mlRecommendation;
+        }
+      } catch (error) {
+        logger.warn('ML recommendation failed, falling back to traditional method:', error);
+      }
+
+      // Fallback to traditional recommendation
+      return await this.generateTraditionalRecommendation(request);
+      
+    } catch (error) {
+      logger.error('Price recommendation generation failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate traditional price recommendation (original implementation)
+   */
+  private async generateTraditionalRecommendation(request: PriceDiscoveryRequest): Promise<PriceRecommendation> {
     const startTime = Date.now();
     
     try {
@@ -42,6 +73,25 @@ export class PriceDiscoveryService {
       const factors = await this.calculatePricingFactors(request, marketData);
       const adjustedPrice = this.applyPricingFactors(basePrice, factors);
       
+      // Apply seasonal adjustments if available
+      try {
+        const seasonalMultipliers = await seasonalAnalysisEngine.getSeasonalMultipliers(
+          request.category, 
+          request.vendorLocation
+        );
+        
+        if (seasonalMultipliers.confidence > 0.5) {
+          adjustedPrice *= seasonalMultipliers.seasonal;
+          factors.push({
+            name: 'Seasonal Adjustment',
+            impact: seasonalMultipliers.seasonal - 1,
+            description: `${seasonalMultipliers.season} seasonal multiplier: ${seasonalMultipliers.seasonal.toFixed(2)}`
+          });
+        }
+      } catch (error) {
+        logger.warn('Seasonal adjustment failed:', error);
+      }
+
       // Calculate price range for negotiation
       const priceRange = this.calculatePriceRange(adjustedPrice, factors);
       

@@ -9,6 +9,7 @@ import profileRoutes from './profile';
 import translationRoutes from './translation';
 import productRoutes from './products';
 import vendorRoutes from './vendor';
+import pricingRoutes from './pricing';
 
 const router = Router();
 
@@ -18,6 +19,7 @@ router.use('/profile', profileRoutes);
 router.use('/translation', translationRoutes);
 router.use('/products', productRoutes);
 router.use('/vendors', vendorRoutes);
+router.use('/pricing', pricingRoutes);
 
 // Health check endpoint
 router.get('/health', (_req, res) => {
